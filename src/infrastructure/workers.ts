@@ -87,8 +87,9 @@ export class Workers implements OnApplicationBootstrap, BeforeApplicationShutdow
   }
 
   // Before (não on) shutdown: precisa terminar antes do MikroORM fechar o pool.
-  async beforeApplicationShutdown(signal?: string): Promise<void> {
-    log("info", "shutting down workers", { signal });
+  async beforeApplicationShutdown(): Promise<void> {
+    log("info", "stopping workers");
     await Promise.all(this.loops.map((loop) => loop.stop()));
+    log("info", "workers stopped");
   }
 }

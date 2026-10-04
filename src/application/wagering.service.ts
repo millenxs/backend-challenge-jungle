@@ -10,6 +10,7 @@ import {
   WalletNotFoundError,
 } from "../domain/errors";
 import type { IntegrationEvent } from "../domain/events/integration-event";
+import { InboxMessage } from "../domain/inbox-message";
 import {
   WagerTransactionPendingReference,
   WagerTransactionProcessed,
@@ -261,11 +262,15 @@ async function claimInbox(
   em: EntityManager,
   inbox: { consumerName: string; messageId: string; payloadHash: string },
 ): Promise<boolean> {
-  // ON CONFLICT em vez de capturar a violação: um erro abortaria a transação inteira.
+  const now = new Date();
+  const message = InboxMessage.receive({ ...inbox, receivedAt: now });
+  // Processada nesta mesma transação: o registro só existe se o efeito financeiro também for confirmado.
+  message.markProcessed(now);
+  // ON CONFLICT em vez de persist + capturar a violação: um erro abortaria a transação inteira.
   const result = await em.execute<{ affectedRows: number }>(
     `insert into inbox_messages (consumer_name, message_id, payload_hash, received_at, processed_at)
-     values (?, ?, ?, now(), now()) on conflict do nothing`,
-    [inbox.consumerName, inbox.messageId, inbox.payloadHash],
+     values (?, ?, ?, ?, ?) on conflict do nothing`,
+    [message.consumerName, message.messageId, message.payloadHash, message.receivedAt, message.processedAt],
     "run",
   );
   return result.affectedRows === 1;

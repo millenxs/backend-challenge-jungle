@@ -47,7 +47,8 @@ export async function startInstance(port: number, env: Record<string, string> = 
     stderr: "inherit",
   });
   const url = `http://localhost:${port}`;
-  for (let i = 0; i < 150; i++) {
+  // Boot pode passar de 20s no WSL lendo /mnt/c; 60s de folga.
+  for (let i = 0; i < 600; i++) {
     if (proc.exitCode !== null) throw new Error(`instance on ${port} exited with ${proc.exitCode}`);
     try {
       if ((await fetch(`${url}/health/live`)).ok) return { url, proc };

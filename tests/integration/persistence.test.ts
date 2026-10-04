@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import type { MikroORM } from "@mikro-orm/postgresql";
+import { MikroORM } from "@mikro-orm/postgresql";
+import { createMikroOrmConfig } from "../../src/infrastructure/persistence/mikro-orm.config";
 import { WageringService } from "../../src/application/wagering.service";
 import { WalletService } from "../../src/application/wallet.service";
 import { expectLedgerMatchesBalance, ledgerCount, openDb, rejectionOf, sql, uuid, wager } from "../support";
@@ -32,6 +33,37 @@ describe("migrations and constraints", () => {
     expect(tables.map((t) => t.table_name)).toEqual(
       expect.arrayContaining(["inbox_messages", "outbox_messages", "wager_transactions", "wallet_ledger_entries", "wallets"]),
     );
+  });
+
+  test("migration is reversible: up → down → up on a throwaway database", async () => {
+    const dbName = `wager_migration_check_${uuid().slice(0, 8)}`;
+    await sql(orm, `create database ${dbName}`);
+    const scratch = await MikroORM.init({ ...createMikroOrmConfig(), dbName });
+    const tables = async () =>
+      (
+        await sql<{ table_name: string }>(
+          scratch,
+          "select table_name from information_schema.tables where table_schema = 'public' and table_name <> 'mikro_orm_migrations' order by 1",
+        )
+      ).map((t) => t.table_name);
+    const expected = ["inbox_messages", "outbox_messages", "wager_transactions", "wallet_ledger_entries", "wallets"];
+    try {
+      await scratch.getMigrator().up();
+      expect(await tables()).toEqual(expected);
+      await scratch.getMigrator().down();
+      expect(await tables()).toEqual([]);
+      const [leftovers] = await sql<{ triggers: number; functions: number }>(
+        scratch,
+        `select (select count(*)::int from pg_trigger where not tgisinternal) as triggers,
+                (select count(*)::int from pg_proc where proname = 'prevent_ledger_mutation') as functions`,
+      );
+      expect(leftovers).toEqual({ triggers: 0, functions: 0 });
+      await scratch.getMigrator().up();
+      expect(await tables()).toEqual(expected);
+    } finally {
+      await scratch.close(true);
+      await sql(orm, `drop database ${dbName}`);
+    }
   });
 
   test("ledger is immutable: UPDATE, DELETE and TRUNCATE are refused by the database", async () => {

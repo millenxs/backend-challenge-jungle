@@ -100,7 +100,7 @@ Problemas de contrato, como payload inválido, wallet inexistente ou conflito de
 - **Sem contexto global:** cada unidade de trabalho usa `orm.em.fork()` (`registerRequestContext: false`). O `inTransaction()` aplica `SET LOCAL lock_timeout = '5s'` e retenta até 3 vezes em deadlock ou lock timeout.
 - **Mapeamento do `Money`:** valor em `NUMERIC(19,2)` com `DecimalType` em modo string. O valor nunca passa por `number` em nenhum ponto. A moeda vai numa coluna `CHAR(3)` separada, e a reidratação usa `Money.from({ amount, currency })`.
 - **Ordem de escrita:** as relações não são mapeadas como associações do ORM (só ids), então os flushes são explícitos: primeiro a transação, depois ledger e outbox, respeitando as FKs.
-- **Migration:** foi escrita à mão em SQL, para que constraints e triggers fiquem visíveis e revisáveis. É reversível (`bun run migration:down`).
+- **Migration:** foi escrita à mão em SQL, para que constraints e triggers fiquem visíveis e revisáveis. É reversível (`bun run migration:down`). Um teste de integração roda `up → down → up` num banco descartável e confere que tabelas, triggers e a função somem no `down`.
 
 ### Garantias aplicadas no schema (restrição 9)
 
@@ -161,7 +161,7 @@ Os recursos FIFO do SQS (`MessageGroupId = walletId`, deduplicação) são só o
 ### Consumidor SQS
 
 - Faz long polling (até 10 mensagens por vez) e processa o lote em paralelo. A mesma wallet é serializada pelo banco.
-- **Inbox persistente** por `(consumerName, messageId)`, gravada na mesma transação SQL do efeito financeiro. Usa `INSERT … ON CONFLICT DO NOTHING`, porque capturar uma violação abortaria a transação.
+- **Inbox persistente** por `(consumerName, messageId)`, gravada na mesma transação SQL do efeito financeiro. O registro é montado pela entidade de domínio `InboxMessage` (`receive` + `markProcessed`) e persistido com `INSERT … ON CONFLICT DO NOTHING` em vez de `persist`, porque capturar a violação de PK abortaria a transação inteira.
 - **Ack (`DeleteMessage`) só depois do commit.**
 
 | Classe de erro | Exemplos | Ação |
@@ -170,7 +170,7 @@ Os recursos FIFO do SQS (`MessageGroupId = walletId`, deduplicação) são só o
 | Inválido (permanente) | JSON quebrado, schema inválido, `Money` inválido, `OPENING` | **DLQ** imediata, com o atributo `reason` |
 | Transitório (ou bug) | PostgreSQL/SQS fora, lock timeout | `ChangeMessageVisibility` com backoff `2^(n-1)` s (teto de 300s) até `maxReceives = 5`, depois **DLQ** (`RETRIES_EXHAUSTED`). A redrive policy da fila (`maxReceiveCount = 5`) é a rede de segurança |
 
-- **SIGTERM:** `app.enableShutdownHooks()`. No `beforeApplicationShutdown`, os loops param de buscar mensagens e esperam o lote em andamento terminar, antes de o MikroORM fechar o pool. Mensagens não concluídas voltam à fila quando o visibility timeout expira.
+- **SIGTERM/SIGINT:** o `main.ts` trata o sinal e chama `app.close()`. No `beforeApplicationShutdown`, os loops param de buscar mensagens e esperam o lote em andamento terminar, antes de o MikroORM fechar o pool. Depois o processo sai com código 0. O `enableShutdownHooks` do Nest não foi usado porque ele re-emite o sinal e sai com 143, que é o mesmo código de um processo morto na hora; com isso, o teste não conseguiria distinguir um encerramento limpo de um abrupto. Mensagens não concluídas voltam à fila quando o visibility timeout expira.
 
 ### Transactional Outbox
 
@@ -240,7 +240,7 @@ O ponto de extensão é o `NoopAuthGuard`, registrado como `APP_GUARD` global. O
 
 ## 10. Limitações conhecidas
 
-- **O teste de `SIGTERM` é pulado no Windows**, onde não existe entrega de sinal (`TerminateProcess` é imediato). O comportamento está implementado e o teste roda em Linux/CI.
+- **O teste de `SIGTERM` é pulado no Windows**, onde não existe entrega de sinal (`TerminateProcess` é imediato). Ele foi verificado em Linux (WSL Ubuntu 24.04) e roda normalmente em CI Linux.
 - **Throughput por wallet:** é limitado pelo lock pessimista (uma transação por vez por wallet). O `lock_timeout` de 5s, mais 3 tentativas, resulta em 503 numa wallet extremamente quente. A evolução seria particionar o consumo por wallet (FIFO `MessageGroupId`), o que reduz a contenção sem mudar a garantia.
 - **Ordem do ledger entre instâncias no mesmo milissegundo:** o id UUIDv7 é gerado depois do lock. Mesmo assim, processos diferentes no mesmo ms podem gerar ids fora da ordem causal. A paginação continua estável. Para uma ordem causal estrita, a evolução seria gravar a `version` da wallet no lançamento, com `UNIQUE (wallet_id, version)`.
 - **Ledger de partidas dobradas:** não foi implementado (é opcional). O ledger é de entrada única por wallet.
