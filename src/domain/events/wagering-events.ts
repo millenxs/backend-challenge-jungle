@@ -137,6 +137,9 @@ export class WagerTransactionPendingReference extends IntegrationEvent<WagerTran
   }
 
   static from(tx: WagerTransaction, ctx: EventContext): WagerTransactionPendingReference {
+    if (!tx.referenceExternalTransactionId) {
+      throw new Error(`Transaction ${tx.id} PENDING_REFERENCE without referenceExternalTransactionId`);
+    }
     return new WagerTransactionPendingReference({
       eventId: ctx.eventId,
       aggregateId: tx.id,
@@ -147,7 +150,7 @@ export class WagerTransactionPendingReference extends IntegrationEvent<WagerTran
         transactionId: tx.id,
         walletId: tx.walletId,
         providerId: tx.providerId,
-        referenceExternalTransactionId: tx.referenceExternalTransactionId ?? "",
+        referenceExternalTransactionId: tx.referenceExternalTransactionId,
       },
     });
   }

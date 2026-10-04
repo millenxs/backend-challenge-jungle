@@ -184,11 +184,13 @@ export class WagerTransaction {
     this._nextAttemptAt = nextAttemptAt;
   }
 
-  reject(code: FailureCode): void {
+  /** observedBalance: saldo no momento da rejeição, devolvido no replay (regra 7). */
+  reject(code: FailureCode, observedBalance?: Money): void {
     this.assertNotTerminal();
     this._status = WagerTransactionStatus.Rejected;
     this._failureCode = code;
     this._nextAttemptAt = undefined;
+    this._balanceAfter = observedBalance;
   }
 
   fail(code: FailureCode): void {

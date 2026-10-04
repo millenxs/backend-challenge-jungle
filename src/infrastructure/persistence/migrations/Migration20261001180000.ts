@@ -113,8 +113,14 @@ export class Migration20261001180000 extends Migration {
     `);
 
     this.addSql(`
+      create trigger wallet_ledger_entries_prevent_truncate
+        before truncate on wallet_ledger_entries
+        for each statement execute function prevent_ledger_mutation();
+    `);
+
+    this.addSql(`
       create index wallet_ledger_entries_wallet_cursor
-        on wallet_ledger_entries (wallet_id, created_at, id);
+        on wallet_ledger_entries (wallet_id, id);
     `);
 
     this.addSql(`
@@ -149,6 +155,7 @@ export class Migration20261001180000 extends Migration {
   }
 
   override async down(): Promise<void> {
+    this.addSql("drop trigger if exists wallet_ledger_entries_prevent_truncate on wallet_ledger_entries;");
     this.addSql("drop trigger if exists wallet_ledger_entries_prevent_delete on wallet_ledger_entries;");
     this.addSql("drop trigger if exists wallet_ledger_entries_prevent_update on wallet_ledger_entries;");
     this.addSql("drop function if exists prevent_ledger_mutation;");

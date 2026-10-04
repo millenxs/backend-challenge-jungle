@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Money } from "../../src/domain/money";
 import { Wallet } from "../../src/domain/wallet";
 import { WagerTransaction } from "../../src/domain/wager-transaction";
-import { applyWagering } from "../../src/domain/apply-wagering";
+import { applyWagering, PENDING_REFERENCE_MAX_ATTEMPTS } from "../../src/domain/apply-wagering";
 import { FailureCode, WagerTransactionKind, WagerTransactionStatus } from "../../src/domain/enums";
 import { InvalidTransactionStateError } from "../../src/domain/errors";
 import { businessPayload, payloadHashOf } from "../../src/domain/payload-hash";
@@ -274,5 +274,67 @@ describe("wagering rules", () => {
       }),
     );
     expect(first.matchesPayload(secondPayload)).toBe(false);
+  });
+
+  test("WIN referencing a BET may carry a different amount", () => {
+    const w = wallet("75.00");
+    const bet = tx(WagerTransactionKind.Bet, "25.00");
+    bet.markProcessed(undefined, at);
+    const win = tx(WagerTransactionKind.Win, "60.00", { referenceExternalTransactionId: bet.externalTransactionId });
+    const result = applyWagering({ wallet: w, transaction: win, reference: bet, alreadyRefunded: false, alreadyRolledBack: false, now: at, ledgerId: "l1" });
+    expect(result.outcome).toBe("processed");
+    expect(w.balance.toJSON().amount).toBe("135.00");
+  });
+
+  test("REFUND must reference a BET", () => {
+    const w = wallet();
+    const win = tx(WagerTransactionKind.Win, "10.00");
+    win.markProcessed(undefined, at);
+    const refund = tx(WagerTransactionKind.Refund, "10.00", { referenceExternalTransactionId: win.externalTransactionId });
+    const result = applyWagering({ wallet: w, transaction: refund, reference: win, alreadyRefunded: false, alreadyRolledBack: false, now: at, ledgerId: "l1" });
+    expect(result).toEqual({ outcome: "rejected", code: FailureCode.INVALID_REFERENCE_KIND });
+    expect(refund.balanceAfter?.toJSON().amount).toBe("100.00");
+  });
+
+  test("REFUND with a different amount than the BET is rejected", () => {
+    const w = wallet();
+    const bet = tx(WagerTransactionKind.Bet, "10.00");
+    bet.markProcessed(undefined, at);
+    const refund = tx(WagerTransactionKind.Refund, "5.00", { referenceExternalTransactionId: bet.externalTransactionId });
+    const result = applyWagering({ wallet: w, transaction: refund, reference: bet, alreadyRefunded: false, alreadyRolledBack: false, now: at, ledgerId: "l1" });
+    expect(result).toEqual({ outcome: "rejected", code: FailureCode.AMOUNT_MISMATCH });
+  });
+
+  test("ROLLBACK of a REFUND debits the refunded amount", () => {
+    const w = wallet("100.00");
+    const refund = tx(WagerTransactionKind.Refund, "25.00", { referenceExternalTransactionId: "bet-x" });
+    refund.markProcessed("bet-id", at);
+    const rollback = tx(WagerTransactionKind.Rollback, "25.00", { referenceExternalTransactionId: refund.externalTransactionId });
+    applyWagering({ wallet: w, transaction: rollback, reference: refund, alreadyRefunded: false, alreadyRolledBack: false, now: at, ledgerId: "l1" });
+    expect(w.balance.toJSON().amount).toBe("75.00");
+  });
+
+  test("reference from another round is rejected", () => {
+    const w = wallet();
+    const bet = WagerTransaction.rehydrate({ ...tx(WagerTransactionKind.Bet, "10.00").snapshot(), roundId: "other-round", status: WagerTransactionStatus.Processed });
+    const refund = tx(WagerTransactionKind.Refund, "10.00", { referenceExternalTransactionId: bet.externalTransactionId });
+    const result = applyWagering({ wallet: w, transaction: refund, reference: bet, alreadyRefunded: false, alreadyRolledBack: false, now: at, ledgerId: "l1" });
+    expect(result).toEqual({ outcome: "rejected", code: FailureCode.ROUND_MISMATCH });
+  });
+
+  test("pending reference expires as REFERENCE_NOT_FOUND after the attempt limit", () => {
+    const w = wallet();
+    const refund = tx(WagerTransactionKind.Refund, "10.00", { referenceExternalTransactionId: "never" });
+    let result;
+    do {
+      result = applyWagering({ wallet: w, transaction: refund, alreadyRefunded: false, alreadyRolledBack: false, now: at, ledgerId: "l1" });
+    } while (result.outcome === "pending_reference");
+    expect(result).toEqual({ outcome: "rejected", code: FailureCode.REFERENCE_NOT_FOUND });
+    expect(refund.retryAttempts).toBe(PENDING_REFERENCE_MAX_ATTEMPTS);
+  });
+
+  test("payload hash is canonical: key order does not matter, values do", () => {
+    expect(payloadHashOf({ a: 1, b: { c: 2, d: 3 } })).toBe(payloadHashOf({ b: { d: 3, c: 2 }, a: 1 }));
+    expect(payloadHashOf({ a: 1 })).not.toBe(payloadHashOf({ a: 2 }));
   });
 });

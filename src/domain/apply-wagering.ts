@@ -11,9 +11,9 @@ export function nextReferenceAttemptAt(now: Date, attempts: number): Date {
   return new Date(now.getTime() + delayMs);
 }
 
-function pendingOrExpire(tx: WagerTransaction, now: Date): ApplyWageringResult {
+function pendingOrExpire(tx: WagerTransaction, wallet: Wallet, now: Date): ApplyWageringResult {
   if (tx.retryAttempts >= PENDING_REFERENCE_MAX_ATTEMPTS) {
-    tx.reject(FailureCode.REFERENCE_NOT_FOUND);
+    tx.reject(FailureCode.REFERENCE_NOT_FOUND, wallet.balance);
     return { outcome: "rejected", code: FailureCode.REFERENCE_NOT_FOUND };
   }
   tx.markPendingReference(nextReferenceAttemptAt(now, tx.retryAttempts + 1));
@@ -37,26 +37,27 @@ export function applyWagering(input: {
   const { wallet, transaction, reference, now, ledgerId } = input;
 
   if (transaction.money.currency !== wallet.currency) {
+    // sem saldo observado — a coluna guarda só o valor, na moeda da transação
     transaction.reject(FailureCode.CURRENCY_MISMATCH);
     return { outcome: "rejected", code: FailureCode.CURRENCY_MISMATCH };
   }
   if (transaction.playerId !== wallet.playerId || transaction.walletId !== wallet.id) {
-    transaction.reject(FailureCode.PLAYER_WALLET_MISMATCH);
+    transaction.reject(FailureCode.PLAYER_WALLET_MISMATCH, wallet.balance);
     return { outcome: "rejected", code: FailureCode.PLAYER_WALLET_MISMATCH };
   }
 
   const needsReference = transaction.requiresReference() || Boolean(transaction.referenceExternalTransactionId);
   if (needsReference) {
     if (!reference) {
-      return pendingOrExpire(transaction, now);
+      return pendingOrExpire(transaction, wallet, now);
     }
 
     const mismatch = validateReference(transaction, reference, input.alreadyRefunded, input.alreadyRolledBack);
     if (mismatch) {
       if (mismatch === FailureCode.REFERENCE_NOT_PROCESSED && !reference.isTerminal()) {
-        return pendingOrExpire(transaction, now);
+        return pendingOrExpire(transaction, wallet, now);
       }
-      transaction.reject(mismatch);
+      transaction.reject(mismatch, wallet.balance);
       return { outcome: "rejected", code: mismatch };
     }
   }
@@ -80,7 +81,7 @@ export function applyWagering(input: {
         transaction.kind === WagerTransactionKind.Bet
           ? FailureCode.INSUFFICIENT_FUNDS
           : FailureCode.REVERSAL_WOULD_MAKE_NEGATIVE;
-      transaction.reject(code);
+      transaction.reject(code, wallet.balance);
       return { outcome: "rejected", code };
     }
     throw error;

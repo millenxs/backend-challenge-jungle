@@ -1,11 +1,9 @@
 import { Money } from "../../domain/money";
-import { InboxMessage } from "../../domain/inbox-message";
 import { OutboxMessage } from "../../domain/outbox-message";
 import { Wallet } from "../../domain/wallet";
 import { WalletLedgerEntry } from "../../domain/wallet-ledger-entry";
 import { WagerTransaction } from "../../domain/wager-transaction";
 import {
-  InboxMessageRecord,
   OutboxMessageRecord,
   WagerTransactionRecord,
   WalletLedgerEntryRecord,
@@ -125,16 +123,6 @@ export function ledgerToDomain(record: WalletLedgerEntryRecord): WalletLedgerEnt
     balanceAfter: Money.from({ amount: record.balanceAfterAmount, currency: record.currency }),
     createdAt: record.createdAt,
   });
-}
-
-export function inboxToRecord(message: InboxMessage): InboxMessageRecord {
-  const record = new InboxMessageRecord();
-  record.messageId = message.messageId;
-  record.consumerName = message.consumerName;
-  record.payloadHash = message.payloadHash;
-  record.receivedAt = message.receivedAt;
-  record.processedAt = message.processedAt;
-  return record;
 }
 
 export function outboxToRecord(message: OutboxMessage): OutboxMessageRecord {

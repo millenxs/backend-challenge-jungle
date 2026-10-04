@@ -16,7 +16,7 @@ export class Money {
 
   static from(props: MoneyProps): Money {
     if (typeof props.amount !== "string") {
-      throw new InvalidMoneyError("amount must be a non-empty decimal string");
+      throw new InvalidMoneyError("amount must be a string");
     }
     if (typeof props.currency !== "string" || !/^[A-Z]{3}$/.test(props.currency)) {
       throw new InvalidMoneyError("currency must be ISO-4217 (three uppercase letters)");

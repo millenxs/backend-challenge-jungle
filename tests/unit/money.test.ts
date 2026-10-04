@@ -44,4 +44,24 @@ describe("Money", () => {
     expect(zero.isZero()).toBe(true);
     expect(zero.isPositive()).toBe(false);
   });
+
+  test("arithmetic is exact: no binary floating point rounding", () => {
+    const a = Money.from({ amount: "0.10", currency: "BRL" });
+    const b = Money.from({ amount: "0.20", currency: "BRL" });
+    expect(a.add(b).toJSON().amount).toBe("0.30");
+    const big = Money.from({ amount: "9999999999999999.99", currency: "BRL" });
+    expect(big.add(Money.from({ amount: "0.01", currency: "BRL" })).toJSON().amount).toBe("10000000000000000.00");
+  });
+
+  test("serializes with fixed scale 2", () => {
+    expect(Money.zero("BRL").toJSON()).toEqual({ amount: "0.00", currency: "BRL" });
+  });
+
+  test.each(["NaN", "Infinity", "1", "1.0", "01.00", " 1.00", "1,00", "+1.00"])("rejects %p", (amount) => {
+    expect(() => Money.from({ amount, currency: "BRL" })).toThrow(InvalidMoneyError);
+  });
+
+  test("rejects invalid currency codes", () => {
+    expect(() => Money.from({ amount: "1.00", currency: "brl" })).toThrow(InvalidMoneyError);
+  });
 });

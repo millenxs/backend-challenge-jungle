@@ -28,3 +28,19 @@ services:
       interval: 5s
       timeout: 10s
       retries: 20
+
+  # Opcional: a aplicação em container. Várias instâncias: docker compose up --scale app=3
+  app:
+    build: .
+    profiles: ["app"]
+    restart: on-failure
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    environment:
+      DATABASE_HOST: postgres
+      AWS_ENDPOINT_URL: http://localstack:4566
+    ports:
+      - "3000"
